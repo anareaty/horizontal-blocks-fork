@@ -7,59 +7,9 @@ import {
   Editor,
   TFile,
   debounce,
-  PluginSettingTab,
-  Setting,
-  Menu,
-  Notice,
 } from "obsidian";
 
-type DividerStyle = "solid" | "dashed" | "dotted" | "transparent";
 
-interface StyleSettings {
-  themeAware: boolean;
-  dividerColor: string;
-  dividerThickness: number; // px
-  dividerOpacity: number; // 0..1
-  dividerStyle: DividerStyle;
-
-  blockBgColor: string;
-  blockTextColor: string;
-  titleTextColor: string;
-  alternatingShading: boolean;
-  showBorders: boolean;
-  borderRadius: number; // px
-  borderThickness: number; // px
-
-  blockPadding: number; // px
-  blockGap: number; // px
-  showToolbar: boolean;
-
-  dividerHoverColor: string;
-  dragActiveShadow: string; // color for inner shadow during drag
-}
-
-const DEFAULT_STYLE_SETTINGS: StyleSettings = {
-  themeAware: true,
-  dividerColor: "#6aa9ff",
-  dividerThickness: 2,
-  dividerOpacity: 1,
-  dividerStyle: "solid",
-
-  blockBgColor: "#2b2b2b",
-  blockTextColor: "#e0e0e0",
-  titleTextColor: "#7aa2ff",
-  alternatingShading: false,
-  showBorders: false,
-  borderRadius: 4,
-  borderThickness: 2,
-
-  blockPadding: 12,
-  blockGap: 0,
-  showToolbar: false,
-
-  dividerHoverColor: "#8bbdff",
-  dragActiveShadow: "rgba(0,0,0,0.08)",
-};
 
 class EditableEmbedChild extends MarkdownRenderChild {
   private plugin: HorizontalBlocksPlugin;
@@ -138,7 +88,6 @@ class EditableEmbedChild extends MarkdownRenderChild {
       }
 
       this.view = view;
-      const editor = view.editor;
 
       if (section) {
         const success = await this.setupSectionSync(view, file, section);
@@ -805,17 +754,34 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
   private plugin: HorizontalBlocksPlugin;
   private source: string;
   private sourcePath: string;
+  private ctx: any
+  private hasColumnWidths: boolean
+  private columnWidths: any
 
   constructor(
     containerEl: HTMLElement,
     plugin: HorizontalBlocksPlugin,
     source: string,
-    sourcePath: string
+    ctx: any
   ) {
     super(containerEl);
     this.plugin = plugin;
+    this.sourcePath = ctx.sourcePath;
+    this.ctx = ctx
+
+    this.columnWidths = {}
+    this.hasColumnWidths = false
+    let firstLine = source.replace(/\n.*/g, "")
+    if(firstLine.trim().match(/^\|(\d+\|)+$/)) {
+      this.hasColumnWidths = true
+      let widths = firstLine.split("|").filter(w => w)
+      widths.forEach((w, i) => {
+        this.columnWidths[i] = w
+      })
+      source = source.replace(firstLine, "")
+    }
+
     this.source = source;
-    this.sourcePath = sourcePath;
   }
 
   async onload() {
@@ -823,8 +789,7 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
     container.className = "horizontal-block-container";
 
     const blockId = await this.plugin.hashString(this.source);
-    const savedLayout =
-      this.plugin.settings[`horizontal-block-layout-${blockId}`] || {};
+
 
     const sections = this.source.split(/^---$/m).map((part) => part.trim());
     const blocks: HTMLElement[] = [];
@@ -833,9 +798,14 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
       const markdown = sections[index];
       const block = await this.createRenderedBlock(
         markdown,
-        savedLayout[`title-${index}`]
+        sections,
+        index
       );
-      const savedWidth = savedLayout[`width-${index}`];
+
+
+
+      let savedWidth = this.columnWidths[index]
+      if (savedWidth == 0) savedWidth = undefined
 
       if (savedWidth) {
         block.classList.add("hblocks-flex-fixed");
@@ -844,16 +814,8 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
         block.classList.add("hblocks-flex-grow");
       }
 
-      // Apply per-block color overrides if any
-      const savedBg = savedLayout[`bg-${index}`];
-      if (savedBg)
-        (block as HTMLElement).style.setProperty("--hblock-block-bg", savedBg);
-      const savedFg = savedLayout[`fg-${index}`];
-      if (savedFg)
-        (block as HTMLElement).style.setProperty(
-          "--hblock-text-color",
-          savedFg
-        );
+
+
 
       blocks.push(block);
     }
@@ -862,7 +824,7 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
     for (let i = 0; i < blocks.length; i++) {
       container.appendChild(blocks[i]);
       // Attach context menu on right-click for visibility toggles
-      this.attachContextMenu(blocks[i]);
+      //this.attachContextMenu(blocks[i]);
       if (i < blocks.length - 1) {
         const resizer = document.createElement("div");
         resizer.className = "hblocks-resizer";
@@ -873,23 +835,37 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
 
     // Add per-block toolbars
     for (let i = 0; i < blocks.length; i++) {
-      this.attachToolbar(container, blocks, blockId, i);
+      //this.attachToolbar(container, blocks, blockId, i);
     }
   }
 
+
+
+
+  generateWidthString() {
+    let widthKeys = Object.keys(this.columnWidths).sort()
+    let lastKey = widthKeys[widthKeys.length-1]
+    let widthString = "|"
+
+    for (let ind = 0; ind <= Number(lastKey); ind++) {
+      let columnWidth = this.columnWidths[ind] || 0
+      widthString += columnWidth + "|"
+    }
+
+    return widthString
+  }
+
+
+
   async createRenderedBlock(
     markdown: string,
-    title?: string
+    sections: string[],
+    index: number
   ): Promise<HTMLElement> {
     const block = document.createElement("div");
     block.className = "hblocks-resizable";
 
-    if (title) {
-      const header = document.createElement("div");
-      header.className = "hblocks-block-title";
-      header.innerText = title;
-      block.appendChild(header);
-    }
+    
 
     const preview = document.createElement("div");
     preview.className = "hblocks-md-preview";
@@ -907,6 +883,64 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
     images.forEach((img: HTMLImageElement) => {
       img.classList.add("hblocks-image");
     });
+
+
+
+    let lines = markdown.split("\n")
+    let checkboxLineNums: number[] = []
+    lines.forEach((line, i) => {
+      if (/^(>*\s*)*- \[ \]/.test(line) || /^(>*\s*)*- \[x\]/.test(line)) {
+        checkboxLineNums.push(i)
+      }
+    })
+
+    //const checkboxes = preview.querySelectorAll(".hblocks-md-preview > ul > li > input.task-list-item-checkbox")
+    const checkboxes = preview.querySelectorAll("ul > li > input.task-list-item-checkbox")
+    checkboxes.forEach((checkbox, i) => {
+      if (checkbox instanceof HTMLInputElement) {
+        checkbox.onclick = (e) => {
+          let lineNum = checkboxLineNums[i]
+          let line = lines[lineNum]
+          if (!line) return
+          if (checkbox.checked) {
+            lines[lineNum] = line.replace("- [ ] ", "- [x] ")
+          } else {
+            lines[lineNum] = line.replace("- [x] ", "- [ ] ")
+          }
+
+          markdown = lines.join("\n")
+          sections[index] = markdown
+          let newSource = sections.join("\n\n---\n\n")
+          let sectionInfo = this.ctx.getSectionInfo(this.containerEl);
+
+          if (sectionInfo) {
+            let widthString = ""
+            if (this.hasColumnWidths) {
+              widthString = this.generateWidthString() + "\n\n"
+            }
+            
+            let lines = sectionInfo.text.split("\n");
+            let textBefore = lines.slice(0, sectionInfo.lineStart + 1).join("\n")
+			      let textAfter = lines.slice(sectionInfo.lineEnd, lines.length).join("\n")
+            let newText = textBefore + "\n" + widthString + newSource + "\n" + textAfter
+            let file = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath)
+
+            if (file instanceof TFile) {
+              this.plugin.app.vault.process(file, (content) => {
+                return newText;
+              })
+            }
+          }
+
+
+
+
+        }
+      }
+    });
+
+
+
 
     this.initializeEditableEmbeds(preview);
 
@@ -1020,11 +1054,36 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
         }
 
         const finalWidth = left.getBoundingClientRect().width;
-        const layoutKey = `horizontal-block-layout-${blockId}`;
-        if (!this.plugin.settings[layoutKey])
-          this.plugin.settings[layoutKey] = {};
-        this.plugin.settings[layoutKey][`width-${index}`] = finalWidth;
-        await this.plugin.saveData(this.plugin.settings);
+        this.columnWidths[index] = finalWidth
+        let sectionInfo = this.ctx.getSectionInfo(this.containerEl);
+
+        if (sectionInfo) {
+
+          let blockTextStartLine = sectionInfo.lineStart + 1
+          if (this.hasColumnWidths) {
+            blockTextStartLine = sectionInfo.lineStart + 2
+          }
+
+          let widthString = this.generateWidthString()
+          let lines = sectionInfo.text.split("\n");
+          let textStart = lines.slice(0, sectionInfo.lineStart + 1).join("\n");
+          let textEnd = lines.slice(blockTextStartLine, lines.length).join("\n");
+          let newText = textStart + "\n" + widthString + "\n" + textEnd
+          let file = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath)
+
+          if (file instanceof TFile) {
+            this.plugin.app.vault.process(file, (content) => {
+              return newText;
+            })
+          }
+
+        }
+
+
+
+
+
+
       };
 
       // Add event listeners
@@ -1035,148 +1094,21 @@ class HorizontalBlockRenderer extends MarkdownRenderChild {
     this.registerDomEvent(resizer, "mousedown", mouseDownHandler);
   }
 
-  private attachToolbar(
-    container: HTMLElement,
-    blocks: HTMLElement[],
-    blockId: string,
-    index: number
-  ) {
-    const block = blocks[index];
-    const toolbar = document.createElement("div");
-    toolbar.classList.add("hblocks-toolbar");
 
-    // Per-block color pickers
-    const bgPicker = document.createElement("input");
-    bgPicker.type = "color";
-    bgPicker.title = "Block background";
-    bgPicker.className = "hblocks-btn";
-    const currentBg = (block as HTMLElement).style.getPropertyValue(
-      "--hblock-block-bg"
-    );
-    if (currentBg) bgPicker.value = currentBg;
-    bgPicker.addEventListener("input", async (e) => {
-      const value = (e.target as HTMLInputElement).value;
-      (block as HTMLElement).style.setProperty("--hblock-block-bg", value);
-      const layoutKey = `horizontal-block-layout-${blockId}`;
-      if (!this.plugin.settings[layoutKey])
-        this.plugin.settings[layoutKey] = {};
-      this.plugin.settings[layoutKey][`bg-${index}`] = value;
-      await this.plugin.saveData(this.plugin.settings);
-    });
-
-    const fgPicker = document.createElement("input");
-    fgPicker.type = "color";
-    fgPicker.title = "Text color";
-    fgPicker.className = "hblocks-btn";
-    const currentFg = (block as HTMLElement).style.getPropertyValue(
-      "--hblock-text-color"
-    );
-    if (currentFg) fgPicker.value = currentFg;
-    fgPicker.addEventListener("input", async (e) => {
-      const value = (e.target as HTMLInputElement).value;
-      (block as HTMLElement).style.setProperty("--hblock-text-color", value);
-      const layoutKey = `horizontal-block-layout-${blockId}`;
-      if (!this.plugin.settings[layoutKey])
-        this.plugin.settings[layoutKey] = {};
-      this.plugin.settings[layoutKey][`fg-${index}`] = value;
-      await this.plugin.saveData(this.plugin.settings);
-    });
-
-    const makeAdjust = (delta: number, label: string) => {
-      const btn = document.createElement("button");
-      btn.className = "hblocks-btn";
-      btn.title = `${label} width`;
-      btn.textContent = label;
-      btn.addEventListener("click", async (e) => {
-        e.preventDefault();
-        const rect = block.getBoundingClientRect();
-        const newWidth = Math.max(80, Math.round(rect.width + delta));
-        block.classList.add("hblocks-flex-fixed");
-        block.classList.remove("hblocks-flex-grow");
-        this.plugin.applyBlockWidth(block, newWidth);
-        const layoutKey = `horizontal-block-layout-${blockId}`;
-        if (!this.plugin.settings[layoutKey])
-          this.plugin.settings[layoutKey] = {};
-        this.plugin.settings[layoutKey][`width-${index}`] = newWidth;
-        await this.plugin.saveData(this.plugin.settings);
-      });
-      return btn;
-    };
-
-    const btnDec = makeAdjust(-32, "-");
-    const btnInc = makeAdjust(32, "+");
-
-    toolbar.appendChild(bgPicker);
-    toolbar.appendChild(fgPicker);
-    toolbar.appendChild(btnDec);
-    toolbar.appendChild(btnInc);
-
-    block.appendChild(toolbar);
-  }
-
-  private attachContextMenu(block: HTMLElement) {
-    this.registerDomEvent(block, "contextmenu", (evt: MouseEvent) => {
-      evt.preventDefault();
-      const menu = new Menu();
-      const showToolbar = this.plugin.style.showToolbar;
-      const showBorders = this.plugin.style.showBorders;
-      const altShade = this.plugin.style.alternatingShading;
-
-      menu.addItem((item) =>
-        item
-          .setTitle(`${showToolbar ? "Hide" : "Show"} toolbar`)
-          .setIcon(showToolbar ? "eye-off" : "eye")
-          .onClick(async () => {
-            this.plugin.style.showToolbar = !showToolbar;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-      menu.addItem((item) =>
-        item
-          .setTitle(`${showBorders ? "Hide" : "Show"} borders`)
-          .setIcon(showBorders ? "minus" : "plus")
-          .onClick(async () => {
-            this.plugin.style.showBorders = !showBorders;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-      menu.addItem((item) =>
-        item
-          .setTitle(`${altShade ? "Disable" : "Enable"} alternating shading`)
-          .setIcon("layout")
-          .onClick(async () => {
-            this.plugin.style.alternatingShading = !altShade;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-
-      menu.showAtPosition({ x: evt.pageX, y: evt.pageY });
-    });
-  }
 }
 
 export default class HorizontalBlocksPlugin extends Plugin {
-  settings: Record<string, any> = {};
-  private styleEl?: HTMLStyleElement;
+
+ 
   embedManager!: EditableEmbedManager;
-  style: StyleSettings = { ...DEFAULT_STYLE_SETTINGS };
 
   async onload() {
-    // Load stored block widths
-    this.settings = (await this.loadData()) || {};
-    // Load style settings (nested under key to avoid colliding with layout entries)
-    this.style = {
-      ...DEFAULT_STYLE_SETTINGS,
-      ...(this.settings.style || {}),
-    };
+
+
 
     this.embedManager = new EditableEmbedManager(this);
 
-    // Apply initial styling variables
-    this.applyStylingVariables();
+
 
     // Register the processor function
     const processor = async (source: string, el: HTMLElement, ctx: any) => {
@@ -1184,17 +1116,15 @@ export default class HorizontalBlocksPlugin extends Plugin {
         el,
         this,
         source,
-        ctx.sourcePath
+        ctx
       );
       ctx.addChild(renderer);
     };
 
     // Register for both "horizontal" and "hblock" triggers
     this.registerMarkdownCodeBlockProcessor("horizontal", processor);
-    this.registerMarkdownCodeBlockProcessor("hblock", processor);
 
-    // Settings tab
-    this.addSettingTab(new HBlockStylingSettingTab(this.app, this));
+    
   }
 
   onunload() {
@@ -1224,358 +1154,14 @@ export default class HorizontalBlocksPlugin extends Plugin {
     (block as HTMLElement).style.removeProperty("--hblocks-width");
   }
 
-  async saveStyle() {
-    this.settings.style = this.style;
-    await this.saveData(this.settings);
-  }
+ 
 
-  applyStylingVariables() {
-    const el = (this.styleEl ||= document.createElement("style"));
-    el.setAttribute("data-hblocks-style", "true");
-    if (!el.parentElement) document.head.appendChild(el);
 
-    // Toggle global classes
-    document.body.classList.toggle(
-      "hblocks-no-borders",
-      !this.style.showBorders
-    );
-    document.body.classList.toggle(
-      "hblocks-alt-shading",
-      !!this.style.alternatingShading
-    );
-    document.body.classList.toggle(
-      "hblocks-toolbar-hidden",
-      !this.style.showToolbar
-    );
+  
 
-    const s = this.style;
-    const dividerColor = s.themeAware
-      ? "var(--interactive-accent)"
-      : s.dividerColor;
-    const hoverColor = s.themeAware
-      ? "var(--text-accent)"
-      : s.dividerHoverColor;
-    const blockBg = s.themeAware
-      ? "var(--background-secondary)"
-      : s.blockBgColor;
-    const textColor = s.themeAware ? "var(--text-normal)" : s.blockTextColor;
-    const titleText = s.themeAware ? "var(--text-accent)" : s.titleTextColor;
 
-    // Compute alt shading color (slightly darken by 6%)
-    const altBg = this.mixColor(blockBg, "#000000", 0.06);
 
-    el.textContent = `
-      :root {
-        --hblock-divider-color: ${dividerColor};
-        --hblock-divider-thickness: ${Math.max(
-          1,
-          Math.min(5, s.dividerThickness)
-        )}px;
-        --hblock-divider-opacity: ${Math.max(0, Math.min(1, s.dividerOpacity))};
-        --hblock-divider-style: ${s.dividerStyle};
 
-        --hblock-block-bg: ${blockBg};
-        --hblock-text-color: ${textColor};
-        --hblock-title-text-color: ${titleText};
-        --hblock-border-radius: ${Math.max(0, s.borderRadius)}px;
-        --hblock-border-thickness: ${Math.max(0, s.borderThickness)}px;
 
-        --hblock-block-padding: ${Math.max(0, s.blockPadding)}px;
-        --hblock-gap-size: ${Math.max(0, s.blockGap)}px;
-
-        --hblock-divider-hover-color: ${hoverColor};
-        --hblock-drag-active-shadow: ${s.dragActiveShadow};
-      }
-      .hblocks-alt-shading .horizontal-block-container .hblocks-resizable:nth-of-type(odd) {
-        background-color: ${altBg};
-      }
-    `;
-  }
-
-  private hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-    const match = hex.replace("#", "").match(/^([0-9a-f]{3}|[0-9a-f]{6})$/i);
-    if (!match) return null;
-    let h = match[1].toLowerCase();
-    if (h.length === 3)
-      h = h
-        .split("")
-        .map((c) => c + c)
-        .join("");
-    const num = parseInt(h, 16);
-    return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
-  }
-
-  private mixColor(c1: string, c2: string, ratio: number): string {
-    // If using theme var, return as-is to avoid mixing
-    if (c1.includes("var(") || c2.includes("var(")) return c1;
-    const a = this.hexToRgb(c1);
-    const b = this.hexToRgb(c2);
-    if (!a || !b) return c1;
-    const r = Math.round(a.r * (1 - ratio) + b.r * ratio);
-    const g = Math.round(a.g * (1 - ratio) + b.g * ratio);
-    const bl = Math.round(a.b * (1 - ratio) + b.b * ratio);
-    return `#${((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1)}`;
-  }
 }
 
-class HBlockStylingSettingTab extends PluginSettingTab {
-  plugin: HorizontalBlocksPlugin;
-  constructor(app: any, plugin: HorizontalBlocksPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("h2", { text: "Horizontal Blocks – Styling" });
-
-    // Theme-aware toggle
-    new Setting(containerEl)
-      .setName("Theme-aware colors")
-      .setDesc("Use theme colors instead of custom picks. Disabling this option will enable color selection in below sections.")
-      .addToggle((t) =>
-        t.setValue(this.plugin.style.themeAware).onChange(async (v) => {
-          this.plugin.style.themeAware = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-          this.display();
-        })
-      );
-
-    containerEl.createEl("h3", { text: "Divider" });
-    new Setting(containerEl)
-      .setName("Color")
-      .setDesc("Resizer divider color")
-      .addColorPicker((p) =>
-        p
-          .setValue(this.plugin.style.dividerColor)
-          .onChange(async (v) => {
-            this.plugin.style.dividerColor = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-          .setDisabled(this.plugin.style.themeAware)
-      );
-    new Setting(containerEl)
-      .setName("Thickness")
-      .setDesc("Divider thickness (px)")
-      .addSlider((s) =>
-        s
-          .setLimits(1, 5, 1)
-          .setValue(this.plugin.style.dividerThickness)
-          .onChange(async (v) => {
-            this.plugin.style.dividerThickness = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-    new Setting(containerEl)
-      .setName("Opacity")
-      .setDesc("Divider opacity")
-      .addSlider((s) =>
-        s
-          .setLimits(0, 100, 5)
-          .setValue(Math.round(this.plugin.style.dividerOpacity * 100))
-          .onChange(async (v) => {
-            this.plugin.style.dividerOpacity = v / 100;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-    new Setting(containerEl)
-      .setName("Style")
-      .setDesc("Divider line style")
-      .addDropdown((d) =>
-        d
-          .addOptions({
-            solid: "Solid",
-            dashed: "Dashed",
-            dotted: "Dotted",
-            transparent: "Transparent",
-          })
-          .setValue(this.plugin.style.dividerStyle)
-          .onChange(async (v) => {
-            this.plugin.style.dividerStyle = v as DividerStyle;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-
-    containerEl.createEl("h3", { text: "Blocks" });
-    new Setting(containerEl)
-      .setName("Background color")
-      .setDesc("Default background for blocks")
-      .addColorPicker((p) =>
-        p
-          .setValue(this.plugin.style.blockBgColor)
-          .onChange(async (v) => {
-            this.plugin.style.blockBgColor = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-          .setDisabled(this.plugin.style.themeAware)
-      );
-    new Setting(containerEl)
-      .setName("Text color")
-      .setDesc("Default text color for blocks")
-      .addColorPicker((p) =>
-        p
-          .setValue(this.plugin.style.blockTextColor)
-          .onChange(async (v) => {
-            this.plugin.style.blockTextColor = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-          .setDisabled(this.plugin.style.themeAware)
-      );
-    new Setting(containerEl)
-      .setName("Title text color")
-      .setDesc("Default color for block titles")
-      .addColorPicker((p) =>
-        p
-          .setValue(this.plugin.style.titleTextColor)
-          .onChange(async (v) => {
-            this.plugin.style.titleTextColor = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-          .setDisabled(this.plugin.style.themeAware)
-      );
-    new Setting(containerEl)
-      .setName("Alternating shading")
-      .setDesc("Zebra-style subtle alternating backgrounds")
-      .addToggle((t) =>
-        t.setValue(this.plugin.style.alternatingShading).onChange(async (v) => {
-          this.plugin.style.alternatingShading = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-        })
-      );
-    new Setting(containerEl).setName("Show borders").addToggle((t) =>
-      t.setValue(this.plugin.style.showBorders).onChange(async (v) => {
-        this.plugin.style.showBorders = v;
-        await this.plugin.saveStyle();
-        this.plugin.applyStylingVariables();
-      })
-    );
-    new Setting(containerEl).setName("Border radius").addSlider((s) =>
-      s
-        .setLimits(0, 24, 1)
-        .setValue(this.plugin.style.borderRadius)
-        .onChange(async (v) => {
-          this.plugin.style.borderRadius = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-        })
-    );
-    new Setting(containerEl).setName("Border thickness").addSlider((s) =>
-      s
-        .setLimits(0, 8, 1)
-        .setValue(this.plugin.style.borderThickness)
-        .onChange(async (v) => {
-          this.plugin.style.borderThickness = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-        })
-    );
-
-    containerEl.createEl("h3", { text: "Spacing & Density" });
-    new Setting(containerEl)
-      .setName("Inner padding")
-      .setDesc("Padding inside each block (px)")
-      .addSlider((s) =>
-        s
-          .setLimits(0, 32, 1)
-          .setValue(this.plugin.style.blockPadding)
-          .onChange(async (v) => {
-            this.plugin.style.blockPadding = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-      );
-    new Setting(containerEl).setName("Gap between blocks").addSlider((s) =>
-      s
-        .setLimits(0, 24, 1)
-        .setValue(this.plugin.style.blockGap)
-        .onChange(async (v) => {
-          this.plugin.style.blockGap = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-        })
-    );
-    new Setting(containerEl)
-      .setName("Toolbar visibility")
-      .setDesc("Hide/show toolbar region (if present)")
-      .addToggle((t) =>
-        t.setValue(this.plugin.style.showToolbar).onChange(async (v) => {
-          this.plugin.style.showToolbar = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-        })
-      );
-
-    containerEl.createEl("h3", { text: "Preview Style Accents" });
-    new Setting(containerEl)
-      .setName("Divider hover accent")
-      .addColorPicker((p) =>
-        p
-          .setValue(this.plugin.style.dividerHoverColor)
-          .onChange(async (v) => {
-            this.plugin.style.dividerHoverColor = v;
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-          })
-          .setDisabled(this.plugin.style.themeAware)
-      );
-    new Setting(containerEl)
-      .setName("Drag active highlight")
-      .setDesc("Inner shadow color during resizing")
-      .addColorPicker((p) =>
-        p.setValue(this.plugin.style.dragActiveShadow).onChange(async (v) => {
-          this.plugin.style.dragActiveShadow = v;
-          await this.plugin.saveStyle();
-          this.plugin.applyStylingVariables();
-        })
-      );
-
-    // Reset to defaults section
-    containerEl.createEl("h3", { text: "Reset" });
-    new Setting(containerEl)
-      .setName("Reset styling to defaults")
-      .setDesc("Restores all styling options to their default values.")
-      .addButton((btn) =>
-        btn
-          .setButtonText("Reset to defaults")
-          .setWarning()
-          .onClick(async () => {
-            const confirmed = confirm(
-              "Reset divider and block styling to defaults (keeps widths)?"
-            );
-            if (!confirmed) return;
-
-            // 1) Reset global style settings
-            this.plugin.style = { ...DEFAULT_STYLE_SETTINGS };
-
-            // 2) Remove per-block style overrides (bg/fg) but keep widths
-            for (const key of Object.keys(this.plugin.settings)) {
-              if (!key.startsWith("horizontal-block-layout-")) continue;
-              const layout = this.plugin.settings[key];
-              if (layout && typeof layout === "object") {
-                for (const prop of Object.keys(layout)) {
-                  if (prop.startsWith("bg-") || prop.startsWith("fg-")) {
-                    delete layout[prop];
-                  }
-                }
-              }
-            }
-
-            // Persist settings and reapply styles
-            await this.plugin.saveStyle();
-            this.plugin.applyStylingVariables();
-            new Notice("Horizontal Blocks styling reset (widths preserved).");
-            this.display();
-          })
-      );
-  }
-}
